@@ -8,3 +8,7 @@ edition = "2021"
 [dependencies]
 crossbeam = "0.8.2"
 crossbeam-channel = "0.5.8"
+lazy_static = "1.4.0"
+walkdir = "2.4.0"
+ring = "0.17.5"
+threadpool = { version = "1.8.1", features = [] }

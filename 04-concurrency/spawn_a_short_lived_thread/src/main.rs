@@ -1,25 +1,48 @@
-extern crate crossbeam;
-extern crate crossbeam_channel;
+use walkdir::WalkDir;
+use std::fs::File;
+use std::io::{BufReader, Read, Error};
+use std::path::Path;
+use threadpool::ThreadPool;
+use std::sync::mpsc::channel;
+use ring::digest::{Context, Digest, SHA256};
 
-use std::thread;
-use std::time;
-use std::time::Duration;
-use crossbeam_channel::bounded;
-use crossbeam_channel::unbounded;
+fn compute_digest<P: AsRef<Path>>(filepath: P) -> Result<(Digest, P), Error> {
+    let mut buf_reader = BufReader::new(File::open(&filepath)?);
+    let mut context = Context::new(&SHA256);
+    let mut buffer = [0; 1024];
 
-fn main() {
-    let (snd, rcv) = unbounded();
-    let n_msgs = 5;
-    crossbeam::scope(|s| {
-        s.spawn(|_| {
-            for i in 0..n_msgs {
-                snd.send(i).unwrap();
-                thread::sleep(time::Duration::from_millis(1000));
-            }
-        });
-    }).unwrap();
-    for _ in 0..n_msgs {
-        let msg = rcv.recv().unwrap();
-        println!("Received {}", msg);
+    loop {
+        let count = buf_reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        context.update(&buffer[..count]);
     }
+    Ok((context.finish(), filepath))
+}
+
+fn main() -> Result<(), Error> {
+    let pool = ThreadPool::new(8);
+
+    let (tx, rx) = channel();
+
+    for entry in WalkDir::new("/home/younghoc/Downloads")
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| !e.path().is_dir()) {
+            let path = entry.path().to_owned();
+            let tx = tx.clone();
+            pool.execute(move || {
+                let digest = compute_digest(path);
+                tx.send(digest).expect("Could not send data!");
+            });
+        }
+
+    drop(tx);
+    for t in rx.iter() {
+        let (sha, path) = t?;
+        println!("{:?} {:?}", sha, path);
+    }
+    Ok(())
 }
